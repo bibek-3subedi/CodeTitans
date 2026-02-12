@@ -94,3 +94,42 @@ export function useMessages() {
   return [messages, setMessages];
 }
 
+// KYC status per high-level role (tenant / owner)
+export function loadKycStatus(roleKey) {
+  try {
+    const raw = localStorage.getItem(`renteasy_kyc_${roleKey}`);
+    return raw ? JSON.parse(raw) : { verified: false };
+  } catch {
+    return { verified: false };
+  }
+}
+
+export function saveKycStatus(roleKey, data) {
+  localStorage.setItem(`renteasy_kyc_${roleKey}`, JSON.stringify(data));
+}
+
+// Tenant preferences stored per-tenant in localStorage
+export function loadTenantPrefs(tenantId, createDefault) {
+  try {
+    const raw = localStorage.getItem(`rentmandu_tenant_prefs_${tenantId}`);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore parse error and fall through to default
+  }
+  const defaults = createDefault ? createDefault() : {};
+  localStorage.setItem(
+    `rentmandu_tenant_prefs_${tenantId}`,
+    JSON.stringify(defaults)
+  );
+  return defaults;
+}
+
+export function saveTenantPrefs(tenantId, prefs) {
+  localStorage.setItem(
+    `rentmandu_tenant_prefs_${tenantId}`,
+    JSON.stringify(prefs)
+  );
+}
+

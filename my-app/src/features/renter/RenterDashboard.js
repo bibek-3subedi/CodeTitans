@@ -1,36 +1,45 @@
 import React, { useMemo, useState } from 'react';
+import { createDefaultTenantPrefs } from '../../lib/models';
+import { loadTenantPrefs, saveTenantPrefs } from '../../lib/storage';
+import { sortListingsByMatch } from '../matching/matchEngine';
 
 function RenterDashboard({ renter, listings, setMessages }) {
-  const [filters, setFilters] = useState({
-    location: '',
-    minPrice: '',
-    maxPrice: '',
-    color: '',
-  });
+  const [prefs, setPrefs] = useState(() =>
+    loadTenantPrefs(renter.id, createDefaultTenantPrefs)
+  );
   const [selectedListing, setSelectedListing] = useState(null);
   const [messageBody, setMessageBody] = useState('');
 
-  const filteredListings = useMemo(() => {
-    return listings.filter((l) => {
-      if (filters.location && !l.location.toLowerCase().includes(filters.location.toLowerCase())) {
-        return false;
-      }
-      if (filters.color && l.color.toLowerCase() !== filters.color.toLowerCase()) {
-        return false;
-      }
-      if (filters.minPrice && l.price < Number(filters.minPrice)) {
-        return false;
-      }
-      if (filters.maxPrice && l.price > Number(filters.maxPrice)) {
-        return false;
-      }
-      return true;
-    });
-  }, [filters, listings]);
+  const matches = useMemo(
+    () => sortListingsByMatch(prefs, listings),
+    [prefs, listings]
+  );
 
-  const handleFilterChange = (e) => {
-    const { name, value } = e.target;
-    setFilters((prev) => ({ ...prev, [name]: value }));
+  const handlePrefsChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setPrefs((prev) => {
+      let next = { ...prev };
+      if (type === 'checkbox') {
+        next[name] = checked;
+      } else if (name === 'preferredAreas') {
+        next.preferredAreas = value
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else if (
+        name === 'budgetMin' ||
+        name === 'budgetMax' ||
+        name === 'rooms' ||
+        name === 'familySize' ||
+        name === 'maxCommuteKm'
+      ) {
+        next[name] = Number(value || 0);
+      } else {
+        next[name] = value;
+      }
+      saveTenantPrefs(renter.id, next);
+      return next;
+    });
   };
 
   const handleSendMessage = (e) => {
@@ -55,70 +64,103 @@ function RenterDashboard({ renter, listings, setMessages }) {
   return (
     <div className="grid two-columns">
       <section className="card">
-        <h2>Browse rooms</h2>
+        <h2>Your preferences</h2>
+        <p className="muted">
+          Define what you care about once. The system then ranks houses based on your preferences.
+        </p>
         <div className="filters">
           <div className="form-row inline">
-            <label>Location</label>
+            <label>Budget min (Rs)</label>
             <input
-              name="location"
-              value={filters.location}
-              onChange={handleFilterChange}
-              placeholder="e.g. City Center"
-            />
-          </div>
-          <div className="form-row inline">
-            <label>Color</label>
-            <input
-              name="color"
-              value={filters.color}
-              onChange={handleFilterChange}
-              placeholder="e.g. Blue"
-            />
-          </div>
-          <div className="form-row inline">
-            <label>Min price</label>
-            <input
-              name="minPrice"
               type="number"
+              name="budgetMin"
+              value={prefs.budgetMin}
               min="0"
-              value={filters.minPrice}
-              onChange={handleFilterChange}
+              onChange={handlePrefsChange}
             />
           </div>
           <div className="form-row inline">
-            <label>Max price</label>
+            <label>Budget max (Rs)</label>
             <input
-              name="maxPrice"
               type="number"
+              name="budgetMax"
+              value={prefs.budgetMax}
               min="0"
-              value={filters.maxPrice}
-              onChange={handleFilterChange}
+              onChange={handlePrefsChange}
             />
+          </div>
+          <div className="form-row inline">
+            <label>Preferred areas (comma separated)</label>
+            <input
+              name="preferredAreas"
+              value={prefs.preferredAreas.join(', ')}
+              onChange={handlePrefsChange}
+              placeholder="e.g. New Road, Koteshwor"
+            />
+          </div>
+          <div className="form-row inline">
+            <label>Rooms needed</label>
+            <input
+              type="number"
+              name="rooms"
+              value={prefs.rooms}
+              min="1"
+              onChange={handlePrefsChange}
+            />
+          </div>
+          <div className="form-row inline">
+            <label>Lifestyle</label>
+            <select name="lifestyle" value={prefs.lifestyle} onChange={handlePrefsChange}>
+              <option value="any">Any</option>
+              <option value="quiet">Quiet</option>
+              <option value="social">Social</option>
+            </select>
+          </div>
+          <div className="form-row inline">
+            <label>
+              <input
+                type="checkbox"
+                name="wifiRequired"
+                checked={prefs.wifiRequired}
+                onChange={handlePrefsChange}
+              />{' '}
+              WiFi required
+            </label>
           </div>
         </div>
 
-        {filteredListings.length === 0 ? (
-          <p>No listings match your filters.</p>
+        <h3 style={{ marginTop: 16 }}>Matched houses</h3>
+        {matches.length === 0 ? (
+          <p>No matches yet. Try widening your budget or areas.</p>
         ) : (
           <ul className="listing-list selectable">
-            {filteredListings.map((l) => (
+            {matches.map(({ listing, score, reasons }) => (
               <li
-                key={l.id}
+                key={listing.id}
                 className={
-                  'listing-item ' + (selectedListing && selectedListing.id === l.id ? 'selected' : '')
+                  'listing-item ' +
+                  (selectedListing && selectedListing.id === listing.id ? 'selected' : '')
                 }
-                onClick={() => setSelectedListing(l)}
+                onClick={() => setSelectedListing(listing)}
               >
                 <div>
-                  <h3>{l.title}</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <h3>{listing.title}</h3>
+                    <span className="badge">Score {score}</span>
+                  </div>
                   <p>
-                    <strong>Color:</strong> {l.color} | <strong>Width:</strong> {l.width} m
+                    <strong>Price:</strong> Rs {listing.price} / month | <strong>Location:</strong>{' '}
+                    {listing.location}
                   </p>
                   <p>
-                    <strong>Price:</strong> ${l.price} / month | <strong>Location:</strong>{' '}
-                    {l.location}
+                    <strong>Color:</strong> {listing.color} | <strong>Width:</strong> {listing.width} m
                   </p>
-                  {l.description && <p className="muted">{l.description}</p>}
+                  {listing.description && <p className="muted">{listing.description}</p>}
+                  <ul className="muted" style={{ marginTop: 4, paddingLeft: 16, fontSize: '0.8rem' }}>
+                    {reasons.map((r) => (
+                      <li key={r}>{r}</li>
+                    ))}
+                  </ul>
                 </div>
               </li>
             ))}
