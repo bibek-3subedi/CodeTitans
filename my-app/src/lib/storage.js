@@ -133,3 +133,110 @@ export function saveTenantPrefs(tenantId, prefs) {
   );
 }
 
+// Basic user auth storage (email/password, role-aware)
+const USERS_KEY = 'renteasy_users';
+
+export function loadUsers() {
+  try {
+    const raw = localStorage.getItem(USERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveUsers(users) {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+
+export function findUserByEmailAndRole(email, role) {
+  const users = loadUsers();
+  return users.find(
+    (u) => u.email.toLowerCase() === email.toLowerCase() && u.role === role
+  );
+}
+
+export function upsertUser(user) {
+  const users = loadUsers();
+  const idx = users.findIndex((u) => u.id === user.id);
+  if (idx === -1) {
+    users.push(user);
+  } else {
+    users[idx] = user;
+  }
+  saveUsers(users);
+  return user;
+}
+
+// Simple profile storage per high-level role (tenant / owner)
+export function loadProfile(roleKey) {
+  try {
+    const raw = localStorage.getItem(`renteasy_profile_${roleKey}`);
+    return raw ? JSON.parse(raw) : {
+      name: '',
+      email: '',
+      phone: '',
+      photoDataUrl: '',
+      bio: '',
+    };
+  } catch {
+    return {
+      name: '',
+      email: '',
+      phone: '',
+      photoDataUrl: '',
+      bio: '',
+    };
+  }
+}
+
+export function saveProfile(roleKey, profile) {
+  localStorage.setItem(`renteasy_profile_${roleKey}`, JSON.stringify(profile));
+}
+
+// Reviews and rewards
+const REVIEWS_KEY = 'renteasy_reviews';
+
+export function loadReviews() {
+  try {
+    const raw = localStorage.getItem(REVIEWS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveReviews(reviews) {
+  localStorage.setItem(REVIEWS_KEY, JSON.stringify(reviews));
+}
+
+export function addReview(review) {
+  const reviews = loadReviews();
+  reviews.push(review);
+  saveReviews(reviews);
+  return reviews;
+}
+
+// Violations tracking
+const VIOLATIONS_KEY = 'renteasy_violations';
+
+export function loadViolations() {
+  try {
+    const raw = localStorage.getItem(VIOLATIONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveViolations(violations) {
+  localStorage.setItem(VIOLATIONS_KEY, JSON.stringify(violations));
+}
+
+export function addViolation(violation) {
+  const violations = loadViolations();
+  violations.push(violation);
+  saveViolations(violations);
+  return violations;
+}
+

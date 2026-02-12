@@ -5,8 +5,6 @@ import {
   useBootstrapData,
   useListings,
   useMessages,
-  loadKycStatus,
-  saveKycStatus,
 } from './lib/storage';
 import LandlordDashboard from './features/landlord/LandlordDashboard';
 import RenterDashboard from './features/renter/RenterDashboard';
@@ -14,6 +12,7 @@ import AdminDashboard from './features/admin/AdminDashboard';
 import KycForm from './features/auth/KycForm';
 import Navbar from './features/landing/Navbar';
 import Footer from './features/landing/Footer';
+import AuthGate from './features/auth/AuthGate';
 
 // Root app: chooses role and wires shared data into role dashboards
 function App() {
@@ -22,36 +21,14 @@ function App() {
   // Always start at the landing page; user chooses Tenant/Owner each time.
   const [currentUser, setCurrentUser] = useState(null);
   const [pendingRole, setPendingRole] = useState(null); // 'tenant' | 'owner'
-  const [kyc, setKyc] = useState(() => ({
-    tenant: loadKycStatus('tenant'),
-    owner: loadKycStatus('owner'),
-  }));
-
-  const loginAsInternalRole = (role) => {
-    const userTemplates = {
-      admin: { id: 'admin-1', name: 'Platform Admin', role: 'admin' },
-      renter: { id: 'renter-1', name: 'Tenant User', role: 'renter' },
-      landlord: { id: 'landlord-1', name: 'Owner User', role: 'landlord' },
-    };
-    const user = userTemplates[role];
-    setCurrentUser(user);
-    setStoredUser(user);
-  };
+  const [authUser, setAuthUser] = useState(null); // user object before KYC
 
   const handleSelectTenant = () => {
-    if (kyc.tenant.verified) {
-      loginAsInternalRole('renter');
-    } else {
-      setPendingRole('tenant');
-    }
+    setPendingRole('tenant');
   };
 
   const handleSelectOwner = () => {
-    if (kyc.owner.verified) {
-      loginAsInternalRole('landlord');
-    } else {
-      setPendingRole('owner');
-    }
+    setPendingRole('owner');
   };
 
   const handleLogout = () => {
@@ -62,7 +39,7 @@ function App() {
   return (
     <div className="app-root">
       <main className="app-main">
-        {!currentUser && !pendingRole && (
+        {!currentUser && !pendingRole && !authUser && (
           <>
             <Navbar onTenantClick={handleSelectTenant} onOwnerClick={handleSelectOwner} />
             <Landing onTenantClick={handleSelectTenant} onOwnerClick={handleSelectOwner} />
@@ -70,28 +47,41 @@ function App() {
           </>
         )}
 
-        {!currentUser && pendingRole === 'tenant' && (
-          <KycForm
-            roleLabel="tenant"
-            onComplete={(data) => {
-              const next = { ...kyc, tenant: data };
-              setKyc(next);
-              saveKycStatus('tenant', data);
-              setPendingRole(null);
-              loginAsInternalRole('renter');
+        {!currentUser && pendingRole && !authUser && (
+          <AuthGate
+            role={pendingRole}
+            onAuthenticated={(user) => {
+              if (user.kycVerified) {
+                const internal = {
+                  id: user.role === 'tenant' ? 'renter-1' : 'landlord-1',
+                  name: user.name,
+                  role: user.role === 'tenant' ? 'renter' : 'landlord',
+                };
+                setCurrentUser(internal);
+                setStoredUser(internal);
+                setPendingRole(null);
+              } else {
+                setAuthUser(user);
+                setPendingRole(null);
+              }
             }}
           />
         )}
 
-        {!currentUser && pendingRole === 'owner' && (
+        {!currentUser && authUser && (
           <KycForm
-            roleLabel="owner"
-            onComplete={(data) => {
-              const next = { ...kyc, owner: data };
-              setKyc(next);
-              saveKycStatus('owner', data);
-              setPendingRole(null);
-              loginAsInternalRole('landlord');
+            roleLabel={authUser.role === 'tenant' ? 'tenant' : 'owner'}
+            user={authUser}
+            onVerified={(verifiedUser) => {
+              // Map to internal app user for dashboards
+              const internal = {
+                id: verifiedUser.role === 'tenant' ? 'renter-1' : 'landlord-1',
+                name: verifiedUser.name,
+                role: verifiedUser.role === 'tenant' ? 'renter' : 'landlord',
+              };
+              setCurrentUser(internal);
+              setStoredUser(internal);
+              setAuthUser(null);
             }}
           />
         )}

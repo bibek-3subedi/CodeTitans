@@ -1,7 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { createDefaultTenantPrefs } from '../../lib/models';
-import { loadTenantPrefs, saveTenantPrefs } from '../../lib/storage';
-import { sortListingsByMatch } from '../matching/matchEngine';
+import { loadTenantPrefs, saveTenantPrefs, loadProfile, saveProfile } from '../../lib/storage';
+import { getAiRecommendations } from '../matching/aiRecommender';
+import { monitorMessage, createViolationRecord } from '../../lib/aiMessageMonitor';
+import { addViolation } from '../../lib/storage';
+import PropertyMap from '../map/PropertyMap';
 
 function RenterDashboard({ renter, listings, setMessages }) {
   const [prefs, setPrefs] = useState(() =>
@@ -9,9 +12,10 @@ function RenterDashboard({ renter, listings, setMessages }) {
   );
   const [selectedListing, setSelectedListing] = useState(null);
   const [messageBody, setMessageBody] = useState('');
+  const [profile, setProfile] = useState(() => loadProfile('tenant'));
 
   const matches = useMemo(
-    () => sortListingsByMatch(prefs, listings),
+    () => getAiRecommendations(prefs, listings),
     [prefs, listings]
   );
 
@@ -46,6 +50,22 @@ function RenterDashboard({ renter, listings, setMessages }) {
     e.preventDefault();
     if (!selectedListing || !messageBody.trim()) return;
 
+    // AI monitoring: detect and sanitize personal info
+    const { sanitized, violations, hasViolations } = monitorMessage(messageBody.trim());
+
+    if (hasViolations) {
+      const violationRecord = createViolationRecord(
+        `msg-${Date.now()}`,
+        violations,
+        'renter',
+        renter.id
+      );
+      addViolation(violationRecord);
+      alert(
+        `⚠️ Violation detected: Personal information detected and removed. Your message was sanitized before sending.`
+      );
+    }
+
     const newMessage = {
       id: `msg-${Date.now()}`,
       createdAt: new Date().toISOString(),
@@ -54,15 +74,56 @@ function RenterDashboard({ renter, listings, setMessages }) {
       toRole: 'admin', // renter never talks directly to landlord
       toId: 'admin-1',
       listingId: selectedListing.id,
-      body: messageBody.trim(),
+      body: sanitized,
+      violations: hasViolations ? violations.length : 0,
     };
     setMessages((prev) => [...prev, newMessage]);
     setMessageBody('');
     alert('Message sent to admin. They will contact the landlord for you.');
   };
 
+  const handleProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfile((prev) => {
+      const next = { ...prev, [name]: value };
+      saveProfile('tenant', next);
+      return next;
+    });
+  };
+
   return (
     <div className="grid two-columns">
+      <section className="card">
+        <h2>Your profile</h2>
+        <p className="muted">
+          Manage your basic information. Owners never see this directly — it&apos;s used to improve your
+          matches and experience.
+        </p>
+        <div className="form" style={{ marginTop: 8 }}>
+          <div className="form-row">
+            <label>Name</label>
+            <input name="name" value={profile.name} onChange={handleProfileChange} />
+          </div>
+          <div className="form-row">
+            <label>Email</label>
+            <input name="email" value={profile.email} onChange={handleProfileChange} />
+          </div>
+          <div className="form-row">
+            <label>Phone</label>
+            <input name="phone" value={profile.phone} onChange={handleProfileChange} />
+          </div>
+          <div className="form-row">
+            <label>Short bio</label>
+            <textarea
+              name="bio"
+              rows={2}
+              value={profile.bio}
+              onChange={handleProfileChange}
+            />
+          </div>
+        </div>
+      </section>
+
       <section className="card">
         <h2>Your preferences</h2>
         <p className="muted">
@@ -133,38 +194,61 @@ function RenterDashboard({ renter, listings, setMessages }) {
         {matches.length === 0 ? (
           <p>No matches yet. Try widening your budget or areas.</p>
         ) : (
-          <ul className="listing-list selectable">
-            {matches.map(({ listing, score, reasons }) => (
-              <li
-                key={listing.id}
-                className={
-                  'listing-item ' +
-                  (selectedListing && selectedListing.id === listing.id ? 'selected' : '')
-                }
-                onClick={() => setSelectedListing(listing)}
-              >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <h3>{listing.title}</h3>
-                    <span className="badge">Score {score}</span>
+          <>
+            <PropertyMap
+              listings={matches.map((m) => m.listing)}
+              selectedListing={selectedListing}
+              onSelectListing={setSelectedListing}
+            />
+            <ul className="listing-list selectable" style={{ marginTop: 12 }}>
+              {matches.map(({ listing, score, reasons }) => (
+                <li
+                  key={listing.id}
+                  className={
+                    'listing-item ' +
+                    (selectedListing && selectedListing.id === listing.id ? 'selected' : '')
+                  }
+                  onClick={() => setSelectedListing(listing)}
+                >
+                  <div>
+                    {listing.photoDataUrl && (
+                      <img
+                        src={listing.photoDataUrl}
+                        alt={listing.title}
+                        style={{
+                          width: '100%',
+                          maxHeight: 160,
+                          objectFit: 'cover',
+                          borderRadius: 8,
+                          marginBottom: 6,
+                        }}
+                      />
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>{listing.title}</h3>
+                      <span className="badge">Score {score}</span>
+                    </div>
+                    <p>
+                      <strong>Price:</strong> Rs {listing.price} / month | <strong>Location:</strong>{' '}
+                      {listing.location}
+                    </p>
+                    <p>
+                      <strong>Color:</strong> {listing.color} | <strong>Width:</strong> {listing.width} m
+                    </p>
+                    {listing.description && <p className="muted">{listing.description}</p>}
+                    <p className="muted" style={{ marginTop: 4, fontSize: '0.8rem' }}>
+                      {matches.find((m) => m.listing.id === listing.id)?.aiSummary}
+                    </p>
+                    <ul className="muted" style={{ marginTop: 2, paddingLeft: 16, fontSize: '0.78rem' }}>
+                      {reasons.map((r) => (
+                        <li key={r}>{r}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <p>
-                    <strong>Price:</strong> Rs {listing.price} / month | <strong>Location:</strong>{' '}
-                    {listing.location}
-                  </p>
-                  <p>
-                    <strong>Color:</strong> {listing.color} | <strong>Width:</strong> {listing.width} m
-                  </p>
-                  {listing.description && <p className="muted">{listing.description}</p>}
-                  <ul className="muted" style={{ marginTop: 4, paddingLeft: 16, fontSize: '0.8rem' }}>
-                    {reasons.map((r) => (
-                      <li key={r}>{r}</li>
-                    ))}
-                  </ul>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 

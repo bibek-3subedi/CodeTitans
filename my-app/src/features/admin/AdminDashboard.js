@@ -1,8 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { monitorMessage, createViolationRecord } from '../../lib/aiMessageMonitor';
+import { addViolation, loadViolations } from '../../lib/storage';
 
 function AdminDashboard({ listings, messages, setMessages }) {
   const [replyBody, setReplyBody] = useState('');
   const [selectedMessage, setSelectedMessage] = useState(null);
+  const [violations, setViolations] = useState(() => loadViolations());
+
+  useEffect(() => {
+    setViolations(loadViolations());
+  }, [messages]);
 
   const renterMessages = useMemo(
     () => messages.filter((m) => m.toRole === 'admin'),
@@ -20,6 +27,17 @@ function AdminDashboard({ listings, messages, setMessages }) {
       alert('Listing not found.');
       return;
     }
+    // Re-monitor before forwarding (in case admin edits)
+    const { sanitized, violations: fwdViolations, hasViolations } = monitorMessage(message.body);
+    if (hasViolations) {
+      const violationRecord = createViolationRecord(
+        `msg-${Date.now()}`,
+        fwdViolations,
+        'admin',
+        'admin-1'
+      );
+      addViolation(violationRecord);
+    }
     const newMsg = {
       id: `msg-${Date.now()}`,
       createdAt: new Date().toISOString(),
@@ -28,7 +46,8 @@ function AdminDashboard({ listings, messages, setMessages }) {
       toRole: 'landlord',
       toId: listing.landlordId,
       listingId: listing.id,
-      body: `Renter message: ${message.body}`,
+      body: `Renter message: ${sanitized}`,
+      violations: hasViolations ? fwdViolations.length : 0,
     };
     setMessages((prev) => [...prev, newMsg]);
     alert('Message forwarded to landlord.');
@@ -37,6 +56,20 @@ function AdminDashboard({ listings, messages, setMessages }) {
   const handleReplyToRenter = (e) => {
     e.preventDefault();
     if (!selectedMessage || !replyBody.trim()) return;
+    // AI monitoring: detect and sanitize personal info
+    const { sanitized, violations, hasViolations } = monitorMessage(replyBody.trim());
+    if (hasViolations) {
+      const violationRecord = createViolationRecord(
+        `msg-${Date.now()}`,
+        violations,
+        'admin',
+        'admin-1'
+      );
+      addViolation(violationRecord);
+      alert(
+        `⚠️ Violation detected: Personal information detected and removed. Your reply was sanitized.`
+      );
+    }
     const newMsg = {
       id: `msg-${Date.now()}`,
       createdAt: new Date().toISOString(),
@@ -45,7 +78,8 @@ function AdminDashboard({ listings, messages, setMessages }) {
       toRole: 'renter',
       toId: selectedMessage.fromId,
       listingId: selectedMessage.listingId,
-      body: replyBody.trim(),
+      body: sanitized,
+      violations: hasViolations ? violations.length : 0,
     };
     setMessages((prev) => [...prev, newMsg]);
     setReplyBody('');
@@ -84,8 +118,25 @@ function AdminDashboard({ listings, messages, setMessages }) {
         <h2>Message center</h2>
         <p className="muted">
           Admin is the only bridge between renters and landlords. Messages flow{' '}
-          <strong>Renter → Admin → Landlord</strong> and back.
+          <strong>Renter → Admin → Landlord</strong> and back. AI monitors all messages 24/7 for
+          personal information violations.
         </p>
+        {violations.length > 0 && (
+          <div
+            style={{
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: 8,
+              padding: 8,
+              marginBottom: 12,
+            }}
+          >
+            <p style={{ fontSize: '0.85rem', color: '#991b1b', margin: 0 }}>
+              ⚠️ <strong>{violations.length}</strong> violation(s) detected. Personal information
+              was automatically sanitized.
+            </p>
+          </div>
+        )}
         <div className="tabs">
           <div className="tab-section">
             <h3>From renters</h3>
@@ -107,6 +158,14 @@ function AdminDashboard({ listings, messages, setMessages }) {
                       <span className="muted">
                         {new Date(m.createdAt).toLocaleString()} (listing {m.listingId})
                       </span>
+                      {m.violations > 0 && (
+                        <span
+                          className="badge"
+                          style={{ background: '#ef4444', color: 'white', marginLeft: 4 }}
+                        >
+                          ⚠️ {m.violations} violation(s)
+                        </span>
+                      )}
                     </div>
                     <p>{m.body}</p>
                     <button
